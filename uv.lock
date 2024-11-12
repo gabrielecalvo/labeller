@@ -277,10 +277,10 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "dash", specifier = ">=2.18.2" },
-    { name = "pandas", specifier = ">=2.2.3" },
-    { name = "plotly", specifier = ">=5.24.1" },
-    { name = "pyarrow", specifier = ">=18.0.0" },
+    { name = "dash" },
+    { name = "pandas" },
+    { name = "plotly" },
+    { name = "pyarrow" },
 ]
 
 [package.metadata.requires-dev]
