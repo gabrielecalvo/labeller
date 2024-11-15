@@ -1,12 +1,12 @@
 import dataclasses
 import logging
 from pathlib import Path
-from typing import TypedDict, Union
+from typing import TypedDict
 
 import pandas as pd
 
 logger = logging.getLogger(__name__)
-PathLike = Union[str, Path]
+PathLike = str | Path
 
 
 class Selection(TypedDict):
@@ -24,6 +24,9 @@ class ColumnDefinitions:
     label_col: str = "label"
 
 
+_SELECTION_IDX_COL = "__selection_idx__"
+
+
 def _validate_df(df: pd.DataFrame, column_defs: ColumnDefinitions) -> pd.DataFrame:
     if df.empty:
         raise ValueError("DataFrame is empty")
@@ -37,6 +40,7 @@ def _validate_df(df: pd.DataFrame, column_defs: ColumnDefinitions) -> pd.DataFra
     for col in dataclasses.asdict(column_defs).values():
         if col not in df.columns:
             raise ValueError(f"Column '{col}' not found")
+
     return df
 
 
@@ -47,6 +51,18 @@ class DataHandler:
     def __init__(self, df: pd.DataFrame, column_definitions: ColumnDefinitions):
         self.df = _validate_df(df, column_defs=column_definitions)
         self.column_definitions = column_definitions
+        self._mark_selection_idx()
+
+    def _mark_selection_idx(self) -> None:
+        for _, sub_df in self.df.groupby(self.column_definitions.label_col):
+            self.df.loc[sub_df.index, _SELECTION_IDX_COL] = range(sub_df.shape[0])
+
+    def set_label(self, idxs: list[int], label: str) -> None:
+        self.df.loc[idxs, self.column_definitions.label_col] = label
+        self._mark_selection_idx()
+
+    def get_selection_idx(self, idx: list[int]) -> pd.Series:
+        return self.df.loc[idx, _SELECTION_IDX_COL]
 
     def save(self, dst_path: PathLike) -> None:
         self.df.to_parquet(dst_path)

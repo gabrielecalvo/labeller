@@ -5,7 +5,7 @@ import dash
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from dash import Input, Output, State, dcc, html
+from dash import Input, Output, Patch, State, dcc, html
 
 from labeller.helpers import DataHandler, Selection
 
@@ -23,34 +23,44 @@ class IDS:
 
 
 def _get_cross_selected_indexes(
-    initial_selection: list[float],
     selected_scatter_1: Selection,
     selected_scatter_2: Selection,
     selected_timeseries: Selection,
-) -> list:
-    _selection = set(initial_selection)
+) -> set | None:
+    _selection: set[int] | None = None
     for sel in (selected_scatter_1, selected_scatter_2, selected_timeseries):
         if sel and sel["points"]:
-            _selection = _selection.intersection(p["pointIndex"] for p in sel["points"])
+            _sel_points = set(p["customdata"][0] for p in sel["points"])  # type: ignore
+            _selection = _sel_points if _selection is None else _selection.intersection(_sel_points)
 
-    return sorted(_selection)
+    return _selection
 
 
-def _get_figure(df: pd.DataFrame, x_col: str, y_col: str, cross_selected_idxs: list) -> go.Figure:
-    fig = px.scatter(df, x=df[x_col], y=df[y_col])
+def _get_figure(
+    df: pd.DataFrame, x_col: str, y_col: str, color_col: str, cross_selected_idxs: pd.Series | None
+) -> go.Figure | Patch:
+    # inspired by https://community.plotly.com/t/selectedpoint-highlights-data-points-for-each-category-instead-of-from-the-dataset-as-a-whole/58697/2
 
-    fig.update_traces(
-        selectedpoints=cross_selected_idxs,
-        mode="markers",
-        unselected={"marker": {"opacity": 0.1, "color": "gray"}},
-    )
+    if cross_selected_idxs is None:
+        fig = px.scatter(df, x=df[x_col], y=df[y_col], color=df[color_col], custom_data=[df.index])
 
-    fig.update_layout(
-        margin={"l": 20, "r": 0, "b": 15, "t": 5},
-        dragmode="lasso",
-        newselection_mode="gradual",
-    )
-    return fig
+        fig.update_traces(
+            selectedpoints=cross_selected_idxs,
+            mode="markers",
+            unselected={"marker": {"opacity": 0.1, "color": "gray"}},
+        )
+
+        fig.update_layout(
+            margin={"l": 20, "r": 0, "b": 15, "t": 5},
+            dragmode="lasso",
+            newselection_mode="gradual",
+        )
+        return fig
+
+    patched_fig = Patch()
+    for i_trace, (_, sub_df) in enumerate(df.groupby(color_col)):
+        patched_fig.data[i_trace]["selectedpoints"] = cross_selected_idxs.filter(sub_df.index).values
+    return patched_fig
 
 
 def create_app(data_handler: DataHandler, dst_path: Union[str, "PathLike[str]"] = DEFAULT_DST_PATH) -> dash.Dash:
@@ -92,27 +102,29 @@ def create_app(data_handler: DataHandler, dst_path: Union[str, "PathLike[str]"] 
         Input(IDS.TIMESERIES, "selectedData"),
     )
     def cross_select(sel_scatter_1: Selection, sel_scatter_2: Selection, sel_timeseries: Selection) -> list[go.Figure]:
-        cross_selected = _get_cross_selected_indexes(
-            data_handler.df.index, sel_scatter_1, sel_scatter_2, sel_timeseries
-        )
+        cross_selected = _get_cross_selected_indexes(sel_scatter_1, sel_scatter_2, sel_timeseries)
+        cross_selected_idxs = data_handler.get_selection_idx(sorted(cross_selected)) if cross_selected else None
+        _common = {
+            "df": data_handler.df,
+            "color_col": data_handler.column_definitions.label_col,
+            "cross_selected_idxs": cross_selected_idxs,
+        }
+
         return [
             _get_figure(
-                df=data_handler.df,
                 x_col=data_handler.column_definitions.scatter_x_col,
                 y_col=data_handler.column_definitions.scatter_y1_col,
-                cross_selected_idxs=cross_selected,
+                **_common,
             ),
             _get_figure(
-                df=data_handler.df,
                 x_col=data_handler.column_definitions.scatter_x_col,
                 y_col=data_handler.column_definitions.scatter_y2_col,
-                cross_selected_idxs=cross_selected,
+                **_common,
             ),
             _get_figure(
-                df=data_handler.df,
                 x_col=data_handler.column_definitions.timeseries_x_col,
                 y_col=data_handler.column_definitions.timeseries_y_col,
-                cross_selected_idxs=cross_selected,
+                **_common,
             ),
         ]
 
@@ -131,10 +143,11 @@ def create_app(data_handler: DataHandler, dst_path: Union[str, "PathLike[str]"] 
         if not label or label.strip() == "":
             return "No label provided."
 
-        cross_selected_indexes = _get_cross_selected_indexes(
-            data_handler.df.index, sel_scatter_1, sel_scatter_2, sel_timeseries
-        )
-        data_handler.df.loc[cross_selected_indexes, data_handler.column_definitions.label_col] = label
+        cross_selected_indexes = _get_cross_selected_indexes(sel_scatter_1, sel_scatter_2, sel_timeseries)
+        if not cross_selected_indexes:
+            return "No points selected."
+
+        data_handler.set_label(idxs=list(cross_selected_indexes), label=label)
         return f"Labeled {len(cross_selected_indexes)} points with '{label}'."
 
     @app.callback(
