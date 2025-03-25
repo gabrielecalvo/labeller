@@ -3,8 +3,9 @@ A simple tool to label timeseries data, built using plotly Dash.
 
 ## Installation
 ```bash
-pip install labeller
+pip install git+https://github.com/gabrielecalvo/labeller.git "plotly<6"
 ```
+NOTE: It currently only works with plotly 5
 
 ## Usage
 You can create a labeller app using the `create_app` function. 
